@@ -4,12 +4,13 @@ extends SceneTree
 ##
 ##   godot --headless --path . --script res://tools/generate_town.gd
 ##
-## The layout is inspired by map1.png: a central paved square, branching paths,
-## clustered homes, small garden courts, and a dense tree border.
+## map1.png is the visible map. The generated TileMap layers remain hidden as
+## scaffolding for future navigation, collision, and interactive overlays.
 
 const SRC := 0  # TileSetAtlasSource 0 = maps/tilesets/town_tilemap.png
 const SCENE_PATH := "res://town.tscn"
 const SCENE_UID := "uid://ym64rrpsg8qh"  # unchanged since before the map existed
+const BACKGROUND_PATH := "res://maps/tilesets/map1.png"
 const MAP_SIZE := Vector2i(40, 36)
 
 const LEGEND := {
@@ -136,14 +137,27 @@ func _initialize() -> void:
 	var buildings: TileMapLayer = town.get_node("Buildings")
 	var trees: TileMapLayer = town.get_node("Trees")
 	var tops: TileMapLayer = town.get_node("TreeTops")
+	var layers: Array[TileMapLayer] = [ground, buildings, trees, tops]
+
+	var background := town.get_node_or_null("Map1Background") as Sprite2D
+	if background == null:
+		background = Sprite2D.new()
+		background.name = "Map1Background"
+		town.add_child(background)
+		background.owner = town
+	background.texture = load(BACKGROUND_PATH)
+	background.centered = false
+	background.z_index = -100
+	town.move_child(background, 0)
 
 	# Buildings/Trees/TreeTops ship with empty TileSets; share the painted one.
 	var tileset: TileSet = ground.tile_set
 	for layer in [buildings, trees, tops]:
 		layer.tile_set = tileset
 
-	for layer in [ground, buildings, trees, tops]:
+	for layer in layers:
 		layer.clear()
+		layer.visible = false
 
 	var placed := 0
 
