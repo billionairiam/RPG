@@ -4,12 +4,13 @@ extends SceneTree
 ##
 ##   godot --headless --path . --script res://tools/generate_town.gd
 ##
-## Ground terrain is authored below as ASCII art (one character per 16x16 tile).
-## Houses and trees are placed from the coordinate lists further down.
+## The layout is inspired by map1.png: a central paved square, branching paths,
+## clustered homes, small garden courts, and a dense tree border.
 
 const SRC := 0  # TileSetAtlasSource 0 = maps/tilesets/town_tilemap.png
 const SCENE_PATH := "res://town.tscn"
 const SCENE_UID := "uid://ym64rrpsg8qh"  # unchanged since before the map existed
+const MAP_SIZE := Vector2i(40, 36)
 
 const LEGEND := {
 	".": Vector2i(0, 0),    # grass
@@ -26,61 +27,53 @@ const LEGEND := {
 	"E": Vector2i(0, 10), "U": Vector2i(1, 10), "F": Vector2i(2, 10), # courtyard wall, bottom
 }
 
-const GROUND := [
-	"............................,..*........",
-	".......................,................",
-	"...,..*.......,....,....................",
-	"..*.....*.......,.^^....................",
-	"...*..............<>.....ATTTTTTD.......",
-	".............**...<>..,..LPPPPPPR.......",
-	"...............,..<>.....LPPPPPPR.......",
-	"...,...,..........<>.....LPPPPPPR.......",
-	".*.....*..........<>.....LPPPPPPR.....,,",
-	"......,..*........<>....,LPPPPPPR.......",
-	"..................<>*...,LPPPPPPR.......",
-	"...............,..<>.....EUU##UUF.......",
-	"...^^^^^^^^^^^^^^^##^^^^^^^^##^^^^^^^^..",
-	"...<#################################>..",
-	"...vvvvvvvvvvvvvvv##vvvvvvvvvvvvvvvvvv..",
-	"..................<>.........,..........",
-	"..............,...<>......,.............",
-	"...........,...,..<>....................",
-	"............*.....<>...,................",
-	"..................<>......,.............",
-	"......,........,..<>.,.......,..........",
-	"..................<>....................",
-	"................,.<>.*.......,.....,....",
-	".................,<>....,...............",
-	".............,...,<>,..*................",
-	",.................vv,....*.....*........",
-	",,......,...................,...........",
-	".........,.,...,.....................*..",
+# Rectangles are [x, y, width, height]. Overlapping paths form natural junctions.
+const PATH_RECTS := [
+	Rect2i(18, 0, 3, 36),
+	Rect2i(0, 16, 40, 3),
+	Rect2i(18, 8, 20, 3),
+	Rect2i(7, 16, 3, 13),
+	Rect2i(0, 27, 21, 3),
+	Rect2i(30, 8, 3, 11),
+	Rect2i(28, 17, 3, 13),
+	Rect2i(18, 32, 15, 3),
+]
+
+const PLAZA := Rect2i(13, 12, 14, 12)
+
+# [x, y, tile] adds a little variation without obscuring walkable routes.
+const GROUND_DECOR := [
+	[4, 4, "*"], [10, 3, ","], [15, 5, "*"], [23, 3, ","], [35, 4, "*"],
+	[2, 12, ","], [7, 13, "*"], [11, 11, ","], [28, 13, "*"], [36, 14, ","],
+	[2, 23, "*"], [12, 25, ","], [24, 27, "*"], [35, 23, ","], [37, 27, "*"],
+	[4, 32, ","], [11, 33, "*"], [24, 31, ","], [35, 32, "*"],
 ]
 
 # --- houses: [x, y, "stone"|"red"], anchor is the TOP-LEFT tile (4x3) -------
 const HOUSES := [
-	[4, 9, "stone"], [6, 20, "stone"], [9, 16, "stone"], [13, 9, "stone"],
-	[21, 18, "stone"], [33, 16, "stone"], [4, 16, "red"], [9, 9, "red"],
-	[12, 21, "red"], [13, 16, "red"], [27, 19, "red"], [33, 9, "red"],
+	[4, 6, "stone"], [11, 7, "red"], [23, 5, "stone"], [33, 11, "red"],
+	[3, 21, "red"], [10, 24, "stone"], [23, 26, "red"], [33, 27, "stone"],
 ]
 
 # --- 1x1 decorations: [x, y, kind] -----------------------------------------
 const TREES := [
-	[4, 3, "pine"], [17, 3, "autumn"], [35, 3, "bush"], [37, 15, "autumn"], [5, 22, "autumn"],
-	[16, 22, "pine"], [34, 20, "bush"], [26, 25, "pine"], [13, 6, "mushroom"], [21, 5, "pine"],
-	[36, 8, "autumn"], [9, 19, "bush"], [30, 17, "mushroom"], [22, 21, "autumn"], [3, 8, "pine"],
-	[11, 25, "pine"], [7, 6, "pine"], [21, 9, "bush"], [23, 14, "pine"], [8, 24, "bush"],
-	[32, 22, "pine"], [36, 21, "autumn"], [30, 24, "autumn"], [2, 11, "bush"], [13, 24, "mushroom"],
+	[3, 4, "pine"], [9, 4, "autumn"], [15, 3, "bush"], [24, 3, "pine"],
+	[35, 6, "autumn"], [3, 11, "bush"], [8, 12, "pine"], [14, 10, "autumn"],
+	[24, 10, "bush"], [28, 6, "pine"], [36, 20, "autumn"], [3, 25, "bush"],
+	[12, 31, "pine"], [25, 32, "autumn"], [35, 24, "pine"], [34, 33, "bush"],
+	[11, 15, "mushroom"], [29, 14, "mushroom"], [11, 21, "bush"], [28, 23, "autumn"],
+	[6, 14, "mushroom"], [16, 26, "pine"], [22, 29, "mushroom"], [37, 25, "bush"],
 ]
 
 # --- 3x3 pine clumps: [x, y, "green"|"autumn"], anchor is TOP-LEFT ---------
 const CLUMPS := [
-	[0, 0, "green"], [0, 25, "green"], [3, 25, "green"], [6, 25, "autumn"], [9, 0, "green"],
-	[12, 0, "autumn"], [15, 0, "green"], [15, 25, "autumn"], [18, 25, "green"], [21, 25, "green"],
-	[24, 0, "green"], [27, 0, "green"], [30, 0, "autumn"], [30, 25, "green"], [33, 25, "autumn"],
-	[36, 25, "green"], [0, 3, "green"], [37, 3, "autumn"], [37, 6, "green"], [37, 9, "autumn"],
-	[0, 12, "green"], [0, 15, "green"], [0, 18, "green"], [37, 18, "green"], [37, 21, "autumn"],
-	[37, 24, "green"],
+	[0, 0, "green"], [3, 0, "autumn"], [6, 0, "green"], [12, 0, "green"],
+	[15, 0, "autumn"], [21, 0, "green"], [27, 0, "autumn"], [30, 0, "green"],
+	[33, 0, "green"], [37, 0, "autumn"], [0, 3, "autumn"], [37, 3, "green"],
+	[0, 9, "green"], [37, 9, "autumn"], [0, 18, "green"], [37, 18, "green"],
+	[0, 30, "autumn"], [37, 30, "green"], [0, 33, "green"], [3, 33, "green"],
+	[6, 33, "autumn"], [9, 33, "green"], [15, 33, "autumn"], [21, 33, "green"],
+	[27, 33, "green"], [33, 33, "autumn"], [37, 33, "green"],
 ]
 
 const HOUSE_TILES := {
@@ -98,6 +91,41 @@ const SMALL_TILES := {
 }
 
 const CLUMP_ORIGIN := {"green": Vector2i(6, 0), "autumn": Vector2i(9, 0)}  # 3x3 block
+
+
+func _paint_ground(ground: TileMapLayer) -> int:
+	var dirt := {}
+	for rect in PATH_RECTS:
+		for y in range(rect.position.y, rect.end.y):
+			for x in range(rect.position.x, rect.end.x):
+				dirt[Vector2i(x, y)] = true
+
+	var decor := {}
+	for item in GROUND_DECOR:
+		decor[Vector2i(item[0], item[1])] = item[2]
+
+	var placed := 0
+	for y in MAP_SIZE.y:
+		for x in MAP_SIZE.x:
+			var cell := Vector2i(x, y)
+			var tile := Vector2i(0, 0)
+			if PLAZA.has_point(cell):
+				tile = LEGEND["P"]
+			elif dirt.has(cell):
+				tile = LEGEND["#"]
+				if not dirt.has(cell + Vector2i.UP):
+					tile = LEGEND["^"]
+				elif not dirt.has(cell + Vector2i.DOWN):
+					tile = LEGEND["v"]
+				elif not dirt.has(cell + Vector2i.LEFT):
+					tile = LEGEND["<"]
+				elif not dirt.has(cell + Vector2i.RIGHT):
+					tile = LEGEND[">"]
+			elif decor.has(cell):
+				tile = LEGEND[decor[cell]]
+			ground.set_cell(cell, SRC, tile)
+			placed += 1
+	return placed
 
 
 func _initialize() -> void:
@@ -119,13 +147,7 @@ func _initialize() -> void:
 
 	var placed := 0
 
-	for y in GROUND.size():
-		var row: String = GROUND[y]
-		for x in row.length():
-			var ch := row[x]
-			assert(LEGEND.has(ch), "unknown ground char '%s' at %d,%d" % [ch, x, y])
-			ground.set_cell(Vector2i(x, y), SRC, LEGEND[ch])
-			placed += 1
+	placed += _paint_ground(ground)
 
 	for h in HOUSES:
 		var tiles: Array = HOUSE_TILES[h[2]]
