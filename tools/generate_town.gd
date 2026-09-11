@@ -11,7 +11,51 @@ const SRC := 0  # TileSetAtlasSource 0 = maps/tilesets/town_tilemap.png
 const SCENE_PATH := "res://town.tscn"
 const SCENE_UID := "uid://ym64rrpsg8qh"  # unchanged since before the map existed
 const BACKGROUND_PATH := "res://maps/tilesets/map1.png"
+const NAVIGATION_SCRIPT := preload("res://map_navigation.gd")
 const MAP_SIZE := Vector2i(40, 36)
+const NAVIGATION_SIZE := Vector2i(79, 79)
+
+static var WATER_POLYGONS := [
+	PackedVector2Array([
+		Vector2(710, 0), Vector2(815, 0), Vector2(815, 105), Vector2(840, 145),
+		Vector2(825, 220), Vector2(875, 255), Vector2(860, 625),
+		Vector2(750, 625), Vector2(760, 350), Vector2(720, 275),
+	]),
+	PackedVector2Array([
+		Vector2(0, 790), Vector2(75, 790), Vector2(95, 825), Vector2(210, 825),
+		Vector2(245, 900), Vector2(350, 920), Vector2(420, 1030),
+		Vector2(385, 1135), Vector2(260, 1160), Vector2(0, 1150),
+	]),
+	PackedVector2Array([
+		Vector2(950, 885), Vector2(1254, 900), Vector2(1254, 1254),
+		Vector2(885, 1254), Vector2(900, 1090), Vector2(930, 1030),
+	]),
+]
+
+# Large solid features traced from map1.png. Thin decorative fences intentionally
+# remain walkable so the 16 px navigation grid does not create narrow dead ends.
+const BLOCKED_RECTS := [
+	Rect2i(0, 0, 1254, 32), Rect2i(0, 1222, 1254, 32),
+	Rect2i(0, 0, 32, 1254), Rect2i(1222, 0, 32, 1254),
+	Rect2i(38, 170, 205, 190), Rect2i(28, 475, 240, 180),
+	Rect2i(925, 300, 225, 220), Rect2i(650, 675, 300, 185),
+	Rect2i(0, 880, 255, 175), Rect2i(525, 950, 270, 220),
+	Rect2i(510, 510, 135, 115), Rect2i(1080, 32, 70, 105),
+	Rect2i(1030, 500, 150, 130), Rect2i(205, 365, 135, 95),
+]
+
+const TREE_BLOCKERS := [
+	Vector2i(65, 55), Vector2i(250, 30), Vector2i(330, 55), Vector2i(470, 15),
+	Vector2i(550, 35), Vector2i(625, 95), Vector2i(675, 165), Vector2i(900, 55),
+	Vector2i(970, 90), Vector2i(1040, 45), Vector2i(1180, 100), Vector2i(315, 170),
+	Vector2i(390, 205), Vector2i(445, 195), Vector2i(310, 310), Vector2i(410, 350),
+	Vector2i(520, 325), Vector2i(680, 395), Vector2i(800, 575), Vector2i(1200, 380),
+	Vector2i(300, 555), Vector2i(310, 680), Vector2i(405, 760), Vector2i(470, 735),
+	Vector2i(1030, 690), Vector2i(1130, 715), Vector2i(1190, 660), Vector2i(980, 790),
+	Vector2i(1080, 800), Vector2i(1170, 790), Vector2i(440, 850), Vector2i(480, 1010),
+	Vector2i(390, 1120), Vector2i(300, 1180), Vector2i(570, 1210), Vector2i(830, 1120),
+	Vector2i(930, 1050), Vector2i(1050, 1170), Vector2i(1160, 1140),
+]
 
 const LEGEND := {
 	".": Vector2i(0, 0),    # grass
@@ -94,6 +138,76 @@ const SMALL_TILES := {
 const CLUMP_ORIGIN := {"green": Vector2i(6, 0), "autumn": Vector2i(9, 0)}  # 3x3 block
 
 
+func _build_navigation_tileset(source_tileset: TileSet) -> TileSet:
+	var tileset := source_tileset.duplicate(true) as TileSet
+	tileset.add_custom_data_layer()
+	tileset.set_custom_data_layer_name(1, "TerrainType")
+	tileset.set_custom_data_layer_type(1, TYPE_STRING)
+	tileset.add_physics_layer()
+	tileset.set_physics_layer_collision_layer(0, 1)
+	tileset.set_physics_layer_collision_mask(0, 1)
+
+	var atlas := tileset.get_source(SRC) as TileSetAtlasSource
+	var ground_data := atlas.get_tile_data(Vector2i(0, 0), 0)
+	ground_data.set_custom_data("IsCellBlocked", false)
+	ground_data.set_custom_data("TerrainType", "ground")
+
+	var water_data := atlas.get_tile_data(Vector2i(7, 3), 0)
+	water_data.set_custom_data("IsCellBlocked", true)
+	water_data.set_custom_data("TerrainType", "water")
+	_add_full_cell_collision(water_data)
+
+	var obstacle_data := atlas.get_tile_data(Vector2i(8, 3), 0)
+	obstacle_data.set_custom_data("IsCellBlocked", true)
+	obstacle_data.set_custom_data("TerrainType", "obstacle")
+	_add_full_cell_collision(obstacle_data)
+	return tileset
+
+
+func _add_full_cell_collision(tile_data: TileData) -> void:
+	tile_data.add_collision_polygon(0)
+	tile_data.set_collision_polygon_points(
+		0,
+		0,
+		PackedVector2Array([
+			Vector2(-8, -8), Vector2(8, -8), Vector2(8, 8), Vector2(-8, 8),
+		]),
+	)
+
+
+func _navigation_terrain_at(pixel: Vector2) -> String:
+	for polygon in WATER_POLYGONS:
+		if Geometry2D.is_point_in_polygon(pixel, polygon):
+			return "water"
+	for rect in BLOCKED_RECTS:
+		if rect.has_point(Vector2i(pixel)):
+			return "obstacle"
+	for tree in TREE_BLOCKERS:
+		if pixel.distance_squared_to(tree) <= 24.0 * 24.0:
+			return "obstacle"
+	return "ground"
+
+
+func _paint_navigation(navigation: TileMapLayer) -> void:
+	const TILES := {
+		"ground": Vector2i(0, 0),
+		"water": Vector2i(7, 3),
+		"obstacle": Vector2i(8, 3),
+	}
+	navigation.clear()
+	for y in NAVIGATION_SIZE.y:
+		for x in NAVIGATION_SIZE.x:
+			var cell := Vector2i(x, y)
+			var terrain := _navigation_terrain_at(Vector2(cell * 16) + Vector2(8, 8))
+			navigation.set_cell(cell, SRC, TILES[terrain])
+
+	# Bridges and stairs cross otherwise blocked water and cliff areas.
+	for rect in [Rect2i(46, 15, 10, 5), Rect2i(9, 53, 13, 4), Rect2i(17, 65, 8, 4)]:
+		for y in range(rect.position.y, rect.end.y):
+			for x in range(rect.position.x, rect.end.x):
+				navigation.set_cell(Vector2i(x, y), SRC, TILES["ground"])
+
+
 func _paint_ground(ground: TileMapLayer) -> int:
 	var dirt := {}
 	for rect in PATH_RECTS:
@@ -149,6 +263,18 @@ func _initialize() -> void:
 	background.centered = false
 	background.z_index = -100
 	town.move_child(background, 0)
+
+	var navigation := town.get_node_or_null("Navigation") as TileMapLayer
+	if navigation == null:
+		navigation = TileMapLayer.new()
+		navigation.name = "Navigation"
+		town.add_child(navigation)
+		navigation.owner = town
+	navigation.set_script(NAVIGATION_SCRIPT)
+	navigation.tile_set = _build_navigation_tileset(ground.tile_set)
+	navigation.visible = false
+	navigation.collision_enabled = true
+	_paint_navigation(navigation)
 
 	# Buildings/Trees/TreeTops ship with empty TileSets; share the painted one.
 	var tileset: TileSet = ground.tile_set
